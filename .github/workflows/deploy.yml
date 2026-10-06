@@ -1,0 +1,65 @@
+name: rebuild shell + deploy Pages
+
+# The shell is a static snapshot of the woobox gallery: it has no server and no
+# reverse proxy, so this workflow IS the refresh mechanism. Votes are always
+# cast on woobox.com itself; only the artwork list / vote counts live here.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"        # snapshot age shown on the pages stays ~<=10 min
+  workflow_dispatch:              # manual "run it now" button
+  push:
+    paths:
+      - build.py
+      - woobox-item-fix.user.js
+      - .github/workflows/deploy.yml
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install requests
+
+      # SITE_BASE_URL feeds <link rel=canonical>/og:url. For a *project* page the
+      # path is /<repo>; for a user site (<user>.github.io) delete the /repo part.
+      - name: rebuild site/ from the live gallery API
+        env:
+          SITE_BASE_URL: https://${{ github.repository_owner }}.github.io/${{ github.repository }}/
+        run: python build.py        # exits non-zero if the API changed shape or a script broke
+
+      - name: build stamp
+        run: date -u +'%Y-%m-%dT%H:%M:%SZ' > site/build.txt
+
+      # artifacts are only uploaded on a successful build, so a broken/changed
+      # upstream API leaves the previously deployed site untouched
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
