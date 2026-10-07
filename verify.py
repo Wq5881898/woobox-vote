@@ -78,12 +78,22 @@ chk("build: entry count matches live API (%d)" % len(api), len(items) == len(api
     "built=%d api=%d" % (len(items), len(api)))
 chk("build: ids identical to live API", {i["id"] for i in items} == set(api))
 
-drift = [(i["id"], i["votes"], api[i["id"]].get("votes")) for i in items
-         if int(api[i["id"]].get("votes") or 0) != i["votes"]]
-chk("build: votes match live API (no stale rows)", not drift, str(drift[:3]))
-votes_map = json.load(open(os.path.join(SITE, "votes.json")))
-chk("votes.json complete + correct", len(votes_map) == len(api) and
-    all(votes_map[k] == int(api[k].get("votes") or 0) for k in api))
+# votes drift while we check (a live contest): a row may legally move a vote or two
+# between the build pull and this one. Anything bigger is a bug.
+DRIFT_OK = 3
+drift = [(i["id"], i["votes"], api[i["id"]]["votes"]) for i in items
+         if abs(int(api[i["id"]]["votes"]) - i["votes"]) > DRIFT_OK]
+chk("build: votes track the live API (nothing off by more than %d)" % DRIFT_OK, not drift, str(drift[:3]))
+moved = [(i["id"], i["votes"], api[i["id"]]["votes"]) for i in items if api[i["id"]]["votes"] != i["votes"]]
+if moved:
+    print("      note: %d count(s) moved since the snapshot; pages pull votes.json to catch up" % len(moved), str(moved[:3]))
+snap = json.load(open(os.path.join(SITE, "votes.json")))
+votes_map = snap["votes"] if "votes" in snap else snap
+by_id = {i["id"]: i for i in items}
+chk("votes.json: timestamped snapshot, one row per entry, values equal to this build",
+    bool(snap.get("built_at")) and len(votes_map) == len(api)
+    and all(votes_map[k] == by_id[k]["votes"] for k in api),
+    "built_at=%s rows=%d" % (snap.get("built_at"), len(votes_map)))
 
 # ─── 2. every entry has a shell page, wired correctly ──────────────────────
 bad = []
@@ -176,7 +186,10 @@ data = json.loads(m.group(1)) if m else []
 chk("index.html embeds all %d entries inline (works offline / file:// / WeChat)" % len(api),
     len(data) == len(api))
 chk("index.html has no external JS/CSS dependency",
-    'src="http' not in idx and '<link' not in idx)
+    'src="http' not in idx and 'stylesheet' not in idx,   # <link rel=canonical> is fine
+    str(sorted(set(re.findall(r'<link rel="([a-z]+)"', idx)))))
+chk("index.html and the item pages refresh counts from same-origin votes.json (no proxy)",
+    "votes.json" in idx and "votes.json" in open(os.path.join(SITE, "v", items[0]["id"] + ".html"), encoding="utf-8").read())
 chk("bookmarklet.txt is a single javascript: URL that is valid JS",
     open(os.path.join(SITE, "bookmarklet.txt")).read().strip().startswith("javascript:"))
 esc_bad = [i["id"] for i in items if ("&" in (i["caption"] or "")) and html.escape(i["caption"]) not in idx]

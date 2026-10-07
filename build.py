@@ -272,9 +272,12 @@ var OFF = document.getElementById('inline').textContent, ON = '▴ 收起投票�
   // same-origin snapshot refresh (plain static file, no proxy involved)
   if(location.protocol.indexOf('http')===0){
     var id=location.pathname.split('/').pop().replace('.html','');
-    fetch('../votes.json',{cache:'no-store'}).then(function(r){return r.json()}).then(function(m){
-      if(m[id]!==undefined){document.getElementById('v').textContent=m[id];
-        document.getElementById('asof').textContent='· 已刷新到最新快照';}
+    fetch('../votes.json',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){
+      var m=j.votes||j;                       // {id:n} or {built_at,votes:{id:n}}
+      if(m[id]!==undefined){
+        document.getElementById('v').textContent=m[id];
+        document.getElementById('asof').textContent='· 票数已刷新'+(j.built_at?('（快照建于 '+j.built_at.replace('T',' ')+')'):'');
+      }
     }).catch(function(){});
   }
 })();
@@ -322,6 +325,7 @@ select{padding:8px;border-radius:8px;border:1px solid var(--line);font-size:13px
 <div class="tools">
  <input id="q" placeholder="搜索名字 / Search a name, e.g. Hanna" autocomplete="off" inputmode="search">
  <div class="rank" id="rank"></div>
+ <div id="live" style="margin-top:8px;font-size:12.5px;color:#7d8b85"></div>
 </div>
 <div class="wrap" style="padding-top:0">
  <div class="grid" id="grid"></div>
@@ -365,6 +369,18 @@ function leaderboard(){   // NOT named "top": a global function called top colli
  document.getElementById('rank').innerHTML=t.map(function(r,i){return '<span>'+(i+1)+'. '+esc(r.caption)+' · '+r.votes+'</span>'}).join('');
 }
 function toast(t){var e=document.getElementById('toast');e.textContent=t;e.classList.add('on');setTimeout(function(){e.classList.remove('on')},1600)}
+// vote counts come from votes.json, which GitHub Actions rebuilds every ~10 min;
+// if the fetch fails we simply keep the numbers baked into this file
+function refreshVotes(){
+  if(location.protocol.indexOf('http')!==0)return;
+  fetch('votes.json',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){
+    var m=j.votes||j,n=0;
+    for(var i=0;i<DATA.length;i++){if(m[DATA[i].id]!==undefined&&m[DATA[i].id]!==DATA[i].votes){DATA[i].votes=m[DATA[i].id];n++}}
+    render();leaderboard();
+    var s=document.getElementById('live');
+    if(s)s.textContent='票数已刷新（'+(n?('变动 '+n+' 件'):'与快照一致')+' · 快照建于 '+(j.built_at?j.built_at.replace('T',' '):'本次构建')+'）· 共 '+DATA.length+' 件作品';
+  }).catch(function(){});
+}
 document.getElementById('q').addEventListener('input',render);
 document.getElementById('sort').addEventListener('change',render);
 document.getElementById('grid').addEventListener('click',function(e){
@@ -382,7 +398,7 @@ document.getElementById('csv').onclick=function(){
  var csv=rows.map(function(r){return r.map(function(c){return '"'+String(c).replace(/"/g,'""')+'"'}).join(',')}).join('\\n');
  var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='vote-links.csv';a.click();
 };
-render();leaderboard();
+render();leaderboard();refreshVotes();
 </script>
 </body></html>
 """
@@ -494,7 +510,9 @@ def main():
     with open(os.path.join(OUT, "items.json"), "w", encoding="utf-8") as f:
         json.dump({"generated_at": generated, "total": len(recs), "items": recs}, f, ensure_ascii=False, indent=1)
     with open(os.path.join(OUT, "votes.json"), "w", encoding="utf-8") as f:
-        json.dump({r["id"]: r["votes"] for r in recs}, f)
+        # compact: {"built_at":..., "votes":{id:n}} - pages read either shape
+        json.dump({"built_at": generated, "votes": {r["id"]: r["votes"] for r in recs}},
+                  f, separators=(",", ":"))
 
     KEYS = ("id", "caption", "votes", "uploaded_by", "thumb", "page", "deep", "type", "frag",
             "pos", "grid_page", "grid_slot", "load_more_clicks")

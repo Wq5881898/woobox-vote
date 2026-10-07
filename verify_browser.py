@@ -201,7 +201,9 @@ with sync_playwright() as pw:
                 title:document.title, others:document.querySelectorAll('.others a').length,
                 prev:!!document.querySelector('.pager a')};}""")
     api_votes = [i for i in items if i["id"] == target["id"]][0]["votes"]
-    live_votes = json.loads(sh.evaluate("() => fetch('../votes.json',{cache:'no-store'}).then(r=>r.text())"))[target["id"]]
+    snap = json.loads(sh.evaluate("() => fetch('../votes.json',{cache:'no-store'}).then(r=>r.text())"))
+    live_votes = (snap["votes"] if "votes" in snap else snap)[target["id"]]
+    chk("votes.json ships a snapshot timestamp the pages quote", bool(snap.get("built_at")), str(snap.get("built_at"))[:30])
     img = st["img"] or {}
     chk("shell page: artwork renders from the signature-free hotlink (%dx%d px)" % (img.get("w", 0), img.get("h", 0)),
         img.get("w", 0) > 200 and "?" not in img.get("src", ""), str(img)[:150])
@@ -312,6 +314,9 @@ with sync_playwright() as pw:
     chk("index: leaderboard present", len(top) == 5, str(top))
     bkmk = ix.evaluate("() => document.getElementById('bkmk').href")
     chk("index: bookmarklet href is a javascript: URL", bkmk.startswith("javascript:") and len(bkmk) > 200, str(len(bkmk)))
+    live = ix.evaluate("() => document.getElementById('live').textContent")
+    chk("index: counts re-fetch votes.json same-origin and stamp the snapshot time",
+        "票数已刷新" in live and str(len(items)) in live, live[:120])
     ix.fill("#q", "Hanna")
     ix.wait_for_timeout(400)
     ix.screenshot(path=os.path.join(SHOT, "5_index_search.png"))
