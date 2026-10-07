@@ -38,12 +38,21 @@ jobs:
 
       - run: pip install requests
 
-      # SITE_BASE_URL feeds <link rel=canonical>/og:url. For a *project* page the
-      # path is /<repo>; for a user site (<user>.github.io) delete the /repo part.
+      # SITE_BASE_URL feeds <link rel=canonical>, the "复制直达链接" target and the
+      # index item hrefs. github.repository is "owner/name" while the Pages path is
+      # the repo name only -- gluing them together is how you get /owner/owner/repo/.
+      - name: derive the deployed base URL
+        id: base
+        run: |
+          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "url=https://$owner.github.io/${{ github.event.repository.name }}/" >> "$GITHUB_OUTPUT"
+
       - name: rebuild site/ from the live gallery API
         env:
-          SITE_BASE_URL: https://${{ github.repository_owner }}.github.io/${{ github.repository }}/
-        run: python build.py        # exits non-zero if the API changed shape or a script broke
+          SITE_BASE_URL: ${{ steps.base.outputs.url }}
+        run: |
+          python build.py    # exits non-zero if the API changed shape or a script broke
+          grep -o 'SHARE = "[^"]*"' site/v/$(ls site/v | head -1) | head -1
 
       - name: build stamp
         run: date -u +'%Y-%m-%dT%H:%M:%SZ' > site/build.txt
