@@ -159,24 +159,34 @@
       };
     }
 
-    if (loadMore) {
-      var b = loadMore.cloneNode(false);             // drops init()'s click listener too
+    // v18 paged the grid behind a #load-more button; v27 renders every entry at
+    // once and has no such button at all. A pinned visitor needs a way back to the
+    // full gallery either way, so make one when the page does not have one.
+    var b;
+    if (loadMore && loadMore.parentNode) {
+      b = loadMore.cloneNode(false);             // drops init()'s click listener too
       loadMore.parentNode.replaceChild(b, loadMore);
-      loadMore = b;
+    } else {
+      b = document.createElement('button');
+      b.type = 'button';
+      b.id = 'load-more';
       b.className = 'btn btn-secondary';
-      b.textContent = '查看全部作品 / Browse all entries';
-      b.disabled = false;
-      b.style.display = 'block';
-      b.onclick = function () {
-        pinned = false;
-        if (mo) mo.disconnect();
-        drop = false;
-        b.textContent = 'Load More Entries';
-        try { galleryPage = 1; } catch (e) {}
-        loadGallery(1);                            // page===1 refills the grid
-        b.onclick = function () { galleryPage++; loadGallery(galleryPage); };
-      };
+      b.style.cssText = 'display:block;margin:14px auto 0';
+      (grid.parentNode || document.body).appendChild(b);
     }
+    loadMore = b;
+    b.textContent = '查看全部作品 / Browse all entries';
+    b.disabled = false;
+    b.style.display = 'block';
+    b.onclick = function () {
+      pinned = false;
+      if (mo) mo.disconnect();
+      drop = false;
+      b.textContent = 'Load More Entries';
+      try { galleryPage = 1; } catch (e) {}
+      loadGallery(1);                            // page===1 refills the grid
+      b.onclick = function () { galleryPage++; loadGallery(galleryPage); };
+    };
 
     var bar = banner('');
     var sp = document.createElement('span');

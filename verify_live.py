@@ -76,17 +76,24 @@ with sync_playwright() as p:
     pg = ctx.new_page()
     pg.goto(BASE, wait_until="load", timeout=90000)
     pg.wait_for_timeout(3500)
-    pg.evaluate("() => document.getElementById('live') && scrollTo(0,document.body.scrollHeight)")
-    pg.wait_for_timeout(4000)          # give loading="lazy" thumbnails a chance
-    pg.evaluate("() => scrollTo(0,0)")
-    pg.wait_for_timeout(500)
+    # thumbnails are loading="lazy": a visitor scrolls, so scroll like one. (Do NOT
+    # use img.decode() here - for a lazy image that never entered the viewport it
+    # never resolves and hangs the whole check.) These are unsigned S3 objects of
+    # 13-30 KB, so a miss means the signature strip broke the URL.
+    imgs = pg.evaluate("""async () => {
+        const imgs=[...document.querySelectorAll('#grid img')];
+        const H=innerHeight, bottom=document.body.scrollHeight;
+        for (let y=0; y<=bottom; y+=H*0.7){ scrollTo(0,y); await new Promise(r=>setTimeout(r,700)); }
+        await new Promise(r=>setTimeout(r,3000));
+        const ok=imgs.filter(i=>i.complete&&i.naturalWidth>50);
+        return {rows:document.querySelectorAll('#grid .it').length, loaded:ok.length,
+                total:imgs.length, failed:imgs.filter(i=>!(i.complete&&i.naturalWidth>50)).map(i=>i.src).slice(0,2)};}""")
     st = pg.evaluate("""() => ({rows:document.querySelectorAll('#grid .it').length,
         live:(document.getElementById('live')||{}).textContent||'',
-        rank:[...document.querySelectorAll('#rank span')].map(e=>e.textContent).slice(0,3),
-        imgs:[...document.querySelectorAll('#grid img')].map(i=>({ok:i.complete&&i.naturalWidth>50,src:i.src}))})""")
-    bad = [i for i in st["imgs"] if not i["ok"]]
-    chk("live: index lists every entry with pictures loaded (S3 hotlinks)",
-        st["rows"] >= 100 and not bad, "%d rows, %d not loaded, e.g. %s" % (st["rows"], len(bad), bad[:1]))
+        rank:[...document.querySelectorAll('#rank span')].map(e=>e.textContent).slice(0,3)})""")
+    chk("live: index lists every entry and every unsigned S3 thumbnail loads on scroll",
+        imgs["rows"] >= 100 and imgs["loaded"] == imgs["total"],
+        "%d rows, %d/%d images, failures %s" % (imgs["rows"], imgs["loaded"], imgs["total"], imgs["failed"][:1]))
     chk("live: index shows the snapshot stamp (counts self-refresh, no proxy)",
         "票数已刷新" in st["live"], st["live"][:100])
     chk("live: top-3 leaderboard rendered", len(st["rank"]) == 3, str(st["rank"]))

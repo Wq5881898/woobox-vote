@@ -4,7 +4,15 @@ Two independent bugs on the artwork deep link
 `https://woobox.com/4rq96i/gallery/<upload_id>`. Both are client-side; the server
 already sends everything needed. Reproducible on a fresh profile, all browsers.
 
-## Bug 1 — the deep link ignores the entry it was given
+> **Status 2026-10-16 — Bug 1 is fixed upstream, thank you.** `app.js` v27 contains
+> `if (site.gallery.item) { openLightbox(site.gallery.item); }` and
+> `galleryLimit = 1000`, so the deep link now opens the artwork's own lightbox
+> (image, Vote, Share Poster) instead of 12 unrelated cards. Verified with
+> `python probes/dbg7_v27.py`: the lightbox is open on load and shows the requested
+> entry. **Bug 2 below is still reproducible on v27**, and the acceptance checks are
+> rewritten against the bundle you ship today.
+
+## Bug 1 — the deep link ignored the entry it was given  *(fixed in v27)*
 
 `window.__SITE__.gallery.item` is rendered into the page by your server:
 
@@ -90,13 +98,16 @@ session / fingerprint + IP already used by `/vote`) in a separate field, or drop
 the client-side `disabled` and let the `/vote` response be the single source of
 truth — its failure body can say `already_voted`.
 
-## Acceptance checks
+## Acceptance checks (against the bundle shipped today)
 
-1. `…/gallery/xpgroevp` on a fresh profile shows exactly 1 card = `Hanna - Elementary`,
-   `Vote` enabled; clicking it shows `Voted` and `votes` increments by 1.
-2. *Browse all entries* → 12 cards, *Load More* then appends 12 more each click
-   (12 → 24 → 36 …), no duplicate or lost pages.
-3. A fresh profile can vote for an entry that currently appears in `result_votes`.
+1. `…/gallery/xpgroevp` on a fresh profile: the lightbox is open on load, shows
+   `Hanna - Elementary`, and its `Vote` button is enabled — even when this profile
+   has never voted and `xpgroevp` currently appears in `result_votes`.
+2. Clicking that `Vote` shows `Voted` and the count increments by 1; closing the
+   lightbox leaves the grid browsable (the grid now holds every entry at once, so
+   there is no *Load More* to click).
+3. A fresh profile can vote for **any** entry, including ones already listed in
+   `result_votes` — that is Bug 2.
 4. Sharing the page's own URL (or `navigator.share`) reproduces check 1 for the
    next visitor.
 

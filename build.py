@@ -23,8 +23,10 @@ Env:    SITE_BASE_URL  absolute base of the deployed shell, e.g.
 """
 
 import io
+import html
 import json
 import os
+import re
 import ssl
 import sys
 import time
@@ -62,12 +64,13 @@ BOOKMARKLET_LINES = [
  "if(r&&r.success){vb.classList.add('voted');vb.textContent='Voted';",
  "if(cnt&&r.votes!==undefined){cnt.textContent=r.votes+' votes';}}",
  "else{vb.disabled=false;vb.textContent='Vote';alert('未计入：'+((r&&(r.error||r.code))||'服务器拒绝'));}});};}",
- "var l=document.getElementById('load-more');",
- "if(l){var n=l.cloneNode(false);n.className='btn btn-secondary';n.textContent='查看全部作品';n.style.display='block';",
+ "var l=document.getElementById('load-more'),n;",
+ "if(l){n=l.cloneNode(false);l.parentNode.replaceChild(n,l);}",
+ "else{n=document.createElement('button');n.type='button';n.id='load-more';n.style.cssText='display:block;margin:14px auto 0';(g.parentNode||document.body).appendChild(n);}",
+ "n.className='btn btn-secondary';n.textContent='查看全部作品';n.style.display='block';n.classList.remove('hidden');",
  "n.onclick=function(){pinned=false;if(mo){mo.disconnect();}drop=false;n.textContent='Load More Entries';",
  "try{galleryPage=1;}catch(e){}loadGallery(1);",
  "n.onclick=function(){galleryPage++;loadGallery(galleryPage);};};",
- "l.parentNode.replaceChild(n,l);n.classList.remove('hidden');}",
  "var bar=document.createElement('div');",
  "bar.style.cssText='position:sticky;top:0;z-index:999;background:#12261f;color:#fff;padding:9px 14px;font:600 13px/1.5 -apple-system,Segoe UI,Arial,sans-serif';",
  "bar.textContent='直达作品：'+(it.caption||'')+' · '+(it.votes||0)+' 票';",
@@ -123,12 +126,61 @@ def load_all():
     return items, d
 
 
-GALLERY_LIMIT = 12        # app.js: const galleryLimit = 12 (page size of the real grid)
+GALLERY_LIMIT_FALLBACK = 12   # only used if the live bundle cannot be read
+# How many entries the index header ranks. Overridable without editing code:
+#   TOP_N=50 python build.py
+TOP_N = max(1, int(os.environ.get("TOP_N") or 20))
 
 
-def build_records(raw_items):
+def fetch_text(url, retries=3):
+    """Plain GET for things outside the API (the frontend bundle, the page HTML)."""
+    last = None
+    for i in range(retries):
+        try:
+            req = urllib.request.Request(url, headers=UA)
+            with urllib.request.urlopen(req, timeout=45, context=CTX) as r:
+                return r.read().decode("utf-8", "replace")
+        except Exception as e:                      # noqa: BLE001
+            last = e
+            time.sleep(1.2 * (i + 1))
+    raise RuntimeError("GET failed: %s (%s)" % (url, str(last)[:80]))
+
+
+def discover_frontend_facts(gallery_page_url):
+    """Read the official frontend instead of trusting this file's constants.
+
+    woobox has shipped new bundles while this shell existed (v18 -> v27), and v27
+    changed two things that decide what the shell should tell the voter:
+      * const galleryLimit = 12  ->  1000  (the grid now shows everything at once,
+        so 'click Load More 8 times' became wrong)
+      * it added  if (site.gallery.item) openLightbox(site.gallery.item);
+        (the official deep link now opens the artwork itself)
+    Returns {"limit": int, "lightbox": bool, "bundle": str}.
+    """
+    facts = {"limit": GALLERY_LIMIT_FALLBACK, "lightbox": False, "bundle": ""}
+    try:
+        page = fetch_text(gallery_page_url)
+        m = re.search(r'src="([^"]*app\.js[^"]*)"', page)
+        if not m:
+            return facts
+        url = html.unescape(m.group(1))
+        url = "https://woobox.com" + url if url.startswith("/") else url
+        src = fetch_text(url)
+        facts["bundle"] = url
+        lm = re.search(r"galleryLimit\s*=\s*(\d+)", src)
+        if lm:
+            facts["limit"] = int(lm.group(1))
+        facts["lightbox"] = "openLightbox(site.gallery.item)" in src
+    except Exception as e:
+        print("note: could not read the live bundle (%s); assuming limit=%d"
+              % (str(e)[:60], GALLERY_LIMIT_FALLBACK))
+    return facts
+
+
+def build_records(raw_items, gallery_limit=GALLERY_LIMIT_FALLBACK, lightbox=False):
     """raw_items arrive in the order the real grid renders them (sort=newest)."""
     recs = []
+    total = len(raw_items)
     for n, u in enumerate(raw_items):
         img = strip_sig(u.get("large_url") or u.get("photo_url"))
         recs.append({
@@ -149,11 +201,29 @@ def build_records(raw_items):
             # keep the text fragment as a best-effort extra.
             "frag": "#gallery-section:~:text=" + urllib.parse.quote(format_caption(u.get("caption"))),
             "pos": n + 1,
-            "grid_page": n // GALLERY_LIMIT + 1,
-            "grid_slot": n % GALLERY_LIMIT + 1,
-            "load_more_clicks": n // GALLERY_LIMIT,
+            "grid_page": n // gallery_limit + 1,
+            "grid_slot": n % gallery_limit + 1,
+            "load_more_clicks": n // gallery_limit,
             "page": "v/%s.html" % u["id"],
         })
+        # The hint must describe the page as it behaves TODAY: with the current
+        # bundle the grid renders every entry at once, so telling people to click
+        # Load More would send them looking for a button that is not there.
+        cap = recs[-1]["caption"]
+        if gallery_limit >= total:
+            recs[-1]["pos_hint"] = (
+                "📍 官方页面现在一次就列出全部 %d 件作品（不用点 Load More），"
+                "按最新排序这张排在<b>第 %d 位</b>。%s找不到就用浏览器搜索 <b>%s</b>。"
+                % (total, n + 1,
+                   "打开链接会自动弹出这张作品的大图，直接点里面的 Vote 即可；" if lightbox else
+                   "打开后页面会自动滚到作品区；",
+                   cap))
+        else:
+            recs[-1]["pos_hint"] = (
+                "📍 官方页面里这张作品位于<b>按最新排序的第 %d 位</b>："
+                "打开后页面会自动滚到作品区；若还没看到，再点 <b>%d 次 Load More</b>"
+                "（第 %d 页第 %d 张）。找不到就用浏览器搜索 <b>%s</b>。"
+                % (n + 1, n // gallery_limit, n // gallery_limit + 1, n % gallery_limit + 1, cap))
     recs.sort(key=lambda r: (-r["votes"], r["caption"]))
     return recs
 
@@ -228,9 +298,7 @@ ITEM_TPL = """<!DOCTYPE html>
    <button class="btn btn-s" id="inline">▾ 不跳走，在本页内投票</button>
    <button class="btn btn-s" id="copy">🔗 复制本页链接发给亲友</button>
   </div>
-  <div class="pos">📍 官方页面里这张作品位于<b>按最新排序的第 @@POS@@ 位</b>：
-   打开后页面会自动滚到作品区；若还没看到，再点 <b>@@CLICKS@@ 次 Load More</b>
-   （第 @@GPAGE@@ 页第 @@SLOT@@ 张）。找不到就用浏览器搜索 <b>@@TITLE@@</b>。</div>
+  <div class="pos">@@POS_HINT@@</div>
   <iframe id="frame" data-src="@@DEEP@@@@FRAG@@" src="about:blank" title="official voting page"></iframe>
   <div class="note">
    <b>为什么票要回官方页面投：</b>投票接口 <code>@@API@@/vote</code> 只认页面自带的
@@ -306,8 +374,12 @@ p.lead{margin:0;font-size:14px;color:var(--sub);line-height:1.6}
  text-decoration:none;font-weight:700;border:0;cursor:pointer;margin-top:5px}
 .it a{background:var(--brand);color:#fff}
 .it button{background:#eef2ef;color:#31513f}
-.rank{display:flex;flex-wrap:wrap;gap:7px;padding:10px 16px 0;font-size:12.5px}
-.rank span{background:#fff;border:1px solid var(--line);border-radius:999px;padding:5px 10px}
+.rank{display:flex;flex-wrap:wrap;gap:6px;padding:4px 16px 0;font-size:12px}
+.rank span{background:#fff;border:1px solid var(--line);border-radius:999px;padding:4px 9px;white-space:nowrap}
+.noimg{background:#f4f6f4;border:1px dashed #b9c6bd;border-radius:12px;padding:26px 14px;text-align:center;color:#63736a;font-size:14px;line-height:1.9}
+.ph{background:#f4f6f4;border:1px dashed #c3cec7;border-radius:10px;height:150px;display:flex;align-items:center;justify-content:center;color:#7d8b85;font-size:13px}
+.rankLabel{padding:10px 16px 0;font-size:12.5px;font-weight:700;color:#4a5a52}
+.rankLabel i{font-weight:400;font-style:normal;color:#7d8b85}
 #tools{padding:18px 16px;font-size:14px;line-height:1.75}
 #tools code{background:#eef2ef;padding:1px 5px;border-radius:5px;font-size:12.5px;word-break:break-all}
 #tools h2{font-size:16px;margin:18px 0 6px}
@@ -324,6 +396,7 @@ select{padding:8px;border-radius:8px;border:1px solid var(--line);font-size:13px
 </header>
 <div class="tools">
  <input id="q" placeholder="搜索名字 / Search a name, e.g. Hanna" autocomplete="off" inputmode="search">
+ <div class="rankLabel">票数排行 Top <span id="rank-n">20</span> <i>（完整名单用上方搜索 / 排序）</i></div>
  <div class="rank" id="rank"></div>
  <div id="live" style="margin-top:8px;font-size:12.5px;color:#7d8b85"></div>
 </div>
@@ -349,7 +422,7 @@ select{padding:8px;border-radius:8px;border:1px solid var(--line);font-size:13px
 </div>
 <div class="toast" id="toast"></div>
 <script>
-var DATA=@@DATA@@, BASE="@@BASE@@";
+var DATA=@@DATA@@, BASE="@@BASE@@", TOP_N=@@TOPN@@;   // TOP_N = how many ranks the header shows
 function esc(s){return String(s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
 function shellUrl(r){return BASE||(location.origin+location.pathname.replace(/[^/]*$/,''))+r.page}
 function render(){
@@ -358,14 +431,17 @@ function render(){
  var list=DATA.filter(function(r){return !q||r.caption.toLowerCase().indexOf(q)>=0||String(r.uploaded_by).toLowerCase().indexOf(q)>=0});
  list.sort(mode==='name'?function(a,b){return a.caption.localeCompare(b.caption)}:function(a,b){return b.votes-a.votes});
  document.getElementById('grid').innerHTML=list.map(function(r){
-  return '<div class="it"><a href="'+r.page+'"><img loading="lazy" src="'+r.thumb+'" alt="'+esc(r.caption)+'"></a>'+
+  return '<div class="it"><a href="'+r.page+'">'+(r.thumb
+    ? '<img loading="lazy" src="'+r.thumb+'" alt="'+esc(r.caption)+'">'
+    : '<div class="ph">图片待生成</div>')+'</a>'+
    '<div class="b"><div class="n">'+esc(r.caption)+'</div><div class="v">'+r.votes+' votes · by '+esc(r.uploaded_by)+'</div>'+
    '<a href="'+r.page+'">投票页 / Vote</a><button data-i="'+r.id+'">复制直达链接</button></div></div>'}).join('');
  document.getElementById('empty').style.display=list.length?'none':'block';
 }
 function leaderboard(){   // NOT named "top": a global function called top collides
                          // with window.top and SyntaxErrors the whole script
- var t=DATA.slice().sort(function(a,b){return b.votes-a.votes}).slice(0,10);
+ var t=DATA.slice().sort(function(a,b){return b.votes-a.votes}).slice(0,TOP_N);
+ document.getElementById('rank-n').textContent=TOP_N;
  document.getElementById('rank').innerHTML=t.map(function(r,i){return '<span>'+(i+1)+'. '+esc(r.caption)+' · '+r.votes+'</span>'}).join('');
 }
 function toast(t){var e=document.getElementById('toast');e.textContent=t;e.classList.add('on');setTimeout(function(){e.classList.remove('on')},1600)}
@@ -409,10 +485,18 @@ def render_item(rec, all_recs, generated, rank_of):
     prev = all_recs[idx - 1] if idx > 0 else None           # list is votes-desc
     nxt = all_recs[idx + 1] if idx + 1 < len(all_recs) else None
     others = [r for r in all_recs if r["id"] != rec["id"]][:12]
-    shot = ('<img src="%s" alt="%s">' % (rec["img"], rec["caption"].replace('"', "&quot;"))
-            if rec["type"] == "photo"
-            else '<a href="%s"><img src="%s" alt="%s"></a><div class="note">该作品为 %s，请在官方页面查看。</div>'
-                 % (rec["deep"], rec["thumb"], rec["caption"], rec["type"]))
+    cap = rec["caption"].replace('"', "&quot;")
+    if rec["type"] not in ("", "photo") and rec["thumb"]:
+        shot = ('<a href="%s"><img src="%s" alt="%s"></a>'
+                '<div class="note">该作品为 %s，请在官方页面查看。</div>'
+                % (rec["deep"], rec["thumb"], cap, rec["type"]))
+    elif rec["img"]:
+        shot = '<img src="%s" alt="%s">' % (rec["img"], cap)
+    else:
+        # a fresh upload can arrive with neither photo_url nor thumb_url yet; an
+        # <img src=""> would show a broken-image icon on the voter's screen
+        shot = ('<div class="noimg">🖼️<br>这张作品的图片还没生成（通常刚上传几分钟内如此）。'
+                '<br>稍后刷新本页，或先在官方页面投票。</div>')
     share = (SITE_BASE_URL + "/" + rec["page"]) if SITE_BASE_URL else rec["page"]
     canon = ('<link rel="canonical" href="%s">\n' % (SITE_BASE_URL + "/" + rec["page"])) if SITE_BASE_URL else ""
     html = (ITEM_TPL
@@ -427,6 +511,7 @@ def render_item(rec, all_recs, generated, rank_of):
             .replace("@@ASOF@@", generated)
             .replace("@@UPLOADED_BY@@", rec["uploaded_by"] or "—")
             .replace("@@POS@@", str(rec["pos"]))
+            .replace("@@POS_HINT@@", rec["pos_hint"])
             .replace("@@CLICKS@@", str(rec["load_more_clicks"]))
             .replace("@@GPAGE@@", str(rec["grid_page"]))
             .replace("@@SLOT@@", str(rec["grid_slot"]))
@@ -483,6 +568,14 @@ def js_selfcheck():
                 if r.returncode:
                     problems.append("%s [%d]: %s" % (os.path.basename(path), n,
                                                      r.stderr.decode("utf-8", "replace")[:300]))
+    # the bookmarklet lives in a URL-encoded href, so the loop above never sees it
+    # - and one stray brace there stays invisible until a voter taps it
+    checked += 1
+    if node:
+        io.open(tmp, "w", encoding="utf-8").write(BOOKMARKLET_JS)
+        r = subprocess.run(["node", "--check", tmp], capture_output=True, timeout=60)
+        if r.returncode:
+            problems.append("bookmarklet: " + r.stderr.decode("utf-8", "replace")[:300])
     print("js self-check: %d script blocks (%s) -> %s"
           % (checked, "node --check + name scan" if node else "name scan only",
              "OK" if not problems else "PROBLEMS"))
@@ -494,7 +587,10 @@ def js_selfcheck():
 
 def main():
     raw, meta = load_all()
-    recs = build_records(raw)
+    facts = discover_frontend_facts("%s/%s/gallery/%s" % (API_ROOT, SHARD, (raw[0]["id"] if raw else "x")))
+    print("live frontend: %s (galleryLimit=%d, auto-lightbox on deep link=%s)"
+          % (facts["bundle"].split("/")[-1], facts["limit"], facts["lightbox"]))
+    recs = build_records(raw, facts["limit"], facts["lightbox"])
     total = meta.get("total")
     if total and len(recs) < total:
         print("WARN: fetched %d of %d entries" % (len(recs), total))
@@ -503,12 +599,21 @@ def main():
     vd = os.path.join(OUT, "v")
     os.makedirs(vd, exist_ok=True)
     rank_of = {r["id"]: i for i, r in enumerate(recs)}
+    keep = {r["id"] + ".html" for r in recs}
     for r in recs:
         with open(os.path.join(vd, r["id"] + ".html"), "w", encoding="utf-8") as f:
             f.write(render_item(r, recs, generated, rank_of))
+    # entries can be withdrawn upstream; a stale page left behind still shows an
+    # old vote count and a Vote button for a poster that no longer exists
+    pruned = [f for f in os.listdir(vd) if f.endswith(".html") and f not in keep]
+    for f in pruned:
+        os.remove(os.path.join(vd, f))
+    if pruned:
+        print("pruned %d page(s) whose entry left the gallery: %s" % (len(pruned), ", ".join(sorted(pruned)[:5])))
 
     with open(os.path.join(OUT, "items.json"), "w", encoding="utf-8") as f:
-        json.dump({"generated_at": generated, "total": len(recs), "items": recs}, f, ensure_ascii=False, indent=1)
+        json.dump({"generated_at": generated, "total": len(recs),
+                   "frontend": facts, "items": recs}, f, ensure_ascii=False, indent=1)
     with open(os.path.join(OUT, "votes.json"), "w", encoding="utf-8") as f:
         # compact: {"built_at":..., "votes":{id:n}} - pages read either shape
         json.dump({"built_at": generated, "votes": {r["id"]: r["votes"] for r in recs}},
@@ -530,6 +635,7 @@ def main():
 
     idx_html = (INDEX_TPL.replace("@@CONTEST@@", CONTEST_NAME).replace("@@CSS@@", CSS)
                 .replace("@@TOTAL@@", str(len(recs))).replace("@@DATA@@", data)
+                .replace("@@TOPN@@", str(TOP_N))
                 .replace("@@BK@@", bk_href.replace("&", "&amp;"))
                 .replace("@@BASE@@", (SITE_BASE_URL + "/") if SITE_BASE_URL else ""))
     with open(os.path.join(OUT, "index.html"), "w", encoding="utf-8") as f:

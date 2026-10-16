@@ -23,6 +23,7 @@ import os
 import socketserver
 import sys
 import threading
+import urllib.parse
 
 import requests
 
@@ -79,6 +80,25 @@ def grid_state(page):
     }""")
 
 
+def landing(pg, caption=""):
+    """Where a visitor actually ends up on the official page. v18 needed the
+    #gallery-section anchor scroll; v27 pops a lightbox with the artwork and a
+    modal locks page scroll, so 'scrolled to the grid' OR 'lightbox open on this
+    artwork' both count as landing on the right poster."""
+    return pg.evaluate("""(cap) => {
+      const lb=[...document.querySelectorAll('[class*=lightbox],[class*=modal]')]
+        .filter(e=>e.offsetParent!==null && /Vote|Voted/.test(e.innerText||''));
+      const sec=document.getElementById('gallery-section');
+      const open=lb[0]||null;
+      return {scrollY:Math.round(window.scrollY),
+        top: sec?Math.round(sec.getBoundingClientRect().top+window.scrollY):-1,
+        h: document.documentElement.scrollHeight,
+        lbOpen:!!open,
+        lbTarget:!!(open&&cap&&(open.innerText||'').indexOf(cap)>=0),
+        lbVote:!!(open&&open.querySelector('.btn-vote:not(.voted)'))};
+    }""", (caption or "")[:10])
+
+
 def wait_render(page):
     """app.js is the last script in <body>: wait until its functions exist."""
     page.wait_for_function("() => typeof window.renderGallery === 'function'", timeout=30000)
@@ -116,11 +136,11 @@ with sync_playwright() as pw:
     wait_render(pg2)
     pg2.wait_for_selector("#gallery-grid .gallery-card", timeout=30000)
     pg2.wait_for_timeout(3000)
-    f = pg2.evaluate("""() => ({scrollY: Math.round(window.scrollY),
-        top: Math.round(document.getElementById('gallery-section').getBoundingClientRect().top + window.scrollY),
-        h: document.documentElement.scrollHeight})""")
-    chk("handoff URL (#gallery-section:~:text=…) scrolls straight to the gallery section",
-        abs(f["scrollY"] - f["top"]) < 60, "scrollY=%d, gallery at %d of %dpx" % (f["scrollY"], f["top"], f["h"]))
+    f = landing(pg2, target["caption"])
+    chk("handoff URL lands on the artwork (scrolled grid, or upstream's auto-lightbox)",
+        abs(f["scrollY"] - f["top"]) < 60 or (f["lbOpen"] and f["lbTarget"]),
+        "scrollY=%d, gallery at %d, lightbox on target=%s, clickable Vote in it=%s"
+        % (f["scrollY"], f["top"], f["lbTarget"], f["lbVote"]))
     pg2.screenshot(path=os.path.join(SHOT, "2_handoff_scrolled.png"))
     pg2.close()
 
@@ -144,16 +164,41 @@ with sync_playwright() as pw:
     chk("userscript: banner offers the shareable deep link", "复制本作品投票链接" in s3["banner"], s3["banner"][:60])
     pg3.screenshot(path=os.path.join(SHOT, "2_after_userscript.png"), full_page=False)
 
-    # later renders must not be swallowed any more -> browse all entries works
-    pg3.evaluate("() => document.getElementById('load-more').click()")
-    pg3.wait_for_timeout(3500)
-    s3b = grid_state(pg3)
-    chk("userscript: 'browse all entries' restores the grid", s3b["cards"] >= 12, "cards=%d" % s3b["cards"])
+    # later renders must not be swallowed any more -> the banner's browse button
+    # has to bring the whole gallery back. v18 paged 12 cards behind a Load More
+    # button; v27 renders every entry at once (galleryLimit=1000), so assert the
+    # bundle-independent truth: browsing restores far more than the 1 pinned card.
     pg3.evaluate("() => {const b=document.getElementById('load-more'); if(b) b.click();}")
-    pg3.wait_for_timeout(3500)
-    s3c = grid_state(pg3)
-    chk("userscript: Load More still appends the next page", s3c["cards"] > s3b["cards"],
-        "%d -> %d" % (s3b["cards"], s3c["cards"]))
+    pg3.wait_for_timeout(4000)
+    s3b = grid_state(pg3)
+    chk("userscript: 'browse all entries' restores the grid", s3b["cards"] >= 24, "cards=%d" % s3b["cards"])
+    chk("userscript: pinned card does not block later renders",
+        s3b["cards"] > s3["cards"], "%d -> %d" % (s3["cards"], s3b["cards"]))
+
+    # the bookmarklet is the no-install path for phones, so it has to do the same
+    # two things on the live page: pin the entry, and hand back the whole gallery
+    # (v27 ships no #load-more element to clone, which used to leave the visitor
+    # stuck with a single card and no way out)
+    bk_js = urllib.parse.unquote(
+        open(os.path.join(SITE, "bookmarklet.txt"), encoding="utf-8").read().strip())
+    bk_js = bk_js[len("javascript:"):]
+    pg4 = ctx.new_page()
+    pg4.goto(target["deep"], wait_until="domcontentloaded", timeout=60000)
+    wait_render(pg4)
+    pg4.wait_for_selector("#gallery-grid .gallery-card", timeout=30000)
+    pg4.evaluate("(js) => window.eval(js)", bk_js)
+    pg4.wait_for_timeout(2000)
+    s4 = grid_state(pg4)
+    bar = pg4.evaluate("() => (document.body.innerText || '').indexOf('直达作品') >= 0")
+    chk("bookmarklet: pins the requested entry on the official page",
+        s4["cards"] == 1 and bar, "cards=%d banner=%s" % (s4["cards"], bar))
+    pg4.evaluate("() => {const b=document.getElementById('load-more'); if(b) b.click();}")
+    pg4.wait_for_timeout(4000)
+    s4b = grid_state(pg4)
+    chk("bookmarklet: 'browse all' restores the gallery even though v27 has no Load More button",
+        s4b["cards"] >= 24, "cards=%d" % s4b["cards"])
+    pg4.screenshot(path=os.path.join(SHOT, "2b_bookmarklet.png"), full_page=False)
+    pg4.close()
 
     # same fix must work for arbitrary entries, not only the example
     for o in others:
@@ -225,7 +270,10 @@ with sync_playwright() as pw:
     idx = order.index(target["id"])
     hint = " ".join(st["hint"].split())
     chk("shell page: position hint matches the real gallery order (slot %d of %d)" % (idx + 1, len(order)),
-        ("第 %d 位" % (idx + 1)) in hint and ("第 %d 页第 %d 张" % (idx // 12 + 1, idx % 12 + 1)) in hint, hint[:160])
+        ("第 %d 位" % (idx + 1)) in hint and (
+            ("第 %d 页第 %d 张" % (idx // 12 + 1, idx % 12 + 1)) in hint      # paged bundle
+            or "一次就列出全部" in hint),                                     # bundle shows all at once
+        hint[:160])
     sh.set_viewport_size({"width": 1280, "height": 900})
     sh.evaluate("() => document.getElementById('inline').click()")
     frame_ok = sh.evaluate("""() => new Promise(res => {const f=document.getElementById('frame');
@@ -260,17 +308,23 @@ with sync_playwright() as pw:
             pass
         ist = fr.evaluate("""() => {const sec = document.getElementById('gallery-section');
           const h = document.querySelector('.hero');
+          const lb=[...document.querySelectorAll('[class*=lightbox],[class*=modal]')]
+            .filter(e=>e.offsetParent!==null && /Vote|Voted/.test(e.innerText||''));
           return {cards:document.querySelectorAll('.gallery-card').length,
             votable:document.querySelectorAll('.btn-vote:not(.voted)').length,
             scrollY:Math.round(window.scrollY),
             galleryTop:Math.round(sec?sec.getBoundingClientRect().top+window.scrollY:-1),
             heroH:Math.round(h?h.getBoundingClientRect().height:-1),
+            lbOpen:lb.length>0,
+            lbVote:lb.length?!!lb[0].querySelector('.btn-vote'):false,
             anchor:!!sec};}""")
         chk("shell page: in-page window shows the official page's own Vote buttons",
             ist["cards"] > 0 and ist["votable"] > 0, str(ist))
-        chk("shell page: in-page window opens scrolled to the gallery (voter sees posters, not the hero)",
-            ist["anchor"] and abs(ist["scrollY"] - ist["galleryTop"]) < 80,
-            "scrollY=%d, gallery at %d, hero is %dpx tall" % (ist["scrollY"], ist["galleryTop"], ist["heroH"]))
+        chk("shell page: in-page window lands on posters, not the hero (scroll or auto-lightbox)",
+            (ist["anchor"] and abs(ist["scrollY"] - ist["galleryTop"]) < 80)
+            or (ist["lbOpen"] and ist["lbVote"]),
+            "scrollY=%d, gallery at %d, hero %dpx, lightbox=%s/vote=%s"
+            % (ist["scrollY"], ist["galleryTop"], ist["heroH"], ist["lbOpen"], ist["lbVote"]))
         chk("shell page: iframe height follows the official page's woobox:resize messages",
             vis["styleH"].endswith("px") and int(vis["styleH"][:-2] or 0) > 300, str(vis["styleH"]))
         if DO_VOTE:
@@ -305,13 +359,20 @@ with sync_playwright() as pw:
     ix.select_option("#sort", "name")
     ix.wait_for_timeout(800)
     order = ix.evaluate("() => [...document.querySelectorAll('#grid .it .n')].map(e=>e.textContent).slice(0,3)")
-    top = ix.evaluate("() => [...document.querySelectorAll('#rank span')].map(e=>e.textContent).slice(0,5)")
+    rank = ix.evaluate("""() => ({chips:[...document.querySelectorAll('#rank span')].map(e=>e.textContent),
+        label:(document.querySelector('.rankLabel')||{}).innerText||''})""")
+    top = rank["chips"]
+    want = sorted(items, key=lambda r: -r["votes"])[:len(top)]
+    want = ["%d. %s · %d" % (i + 1, r["caption"], r["votes"]) for i, r in enumerate(want)]
+    chk("index: header ranks the top %d entries, in true vote order" % len(top),
+        len(top) == 20 and top == want, "%d chips, head %s" % (len(top), top[:2]))
+    chk("index: the ranking header says how many it lists",
+        str(len(top)) in rank["label"], rank["label"].replace("\n", " ")[:70])
     chk("index: all %d entries listed on open (no Load More)" % all_cards, all_cards == len(items), str(all_cards))
     chk("index: search narrows to the requested entry", one and all("Hanna" in t for t in one), str(one))
     chk("index: name sort works", order == sorted(order), str(order))
     ix.select_option("#sort", "votes")
     ix.wait_for_timeout(600)
-    chk("index: leaderboard present", len(top) == 5, str(top))
     bkmk = ix.evaluate("() => document.getElementById('bkmk').href")
     chk("index: bookmarklet href is a javascript: URL", bkmk.startswith("javascript:") and len(bkmk) > 200, str(len(bkmk)))
     live = ix.evaluate("() => document.getElementById('live').textContent")

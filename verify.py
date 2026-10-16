@@ -10,6 +10,7 @@ mis-built site cannot be shipped silently.
 """
 
 import concurrent.futures as cf
+import calendar
 import glob
 import html
 import json
@@ -17,6 +18,7 @@ import os
 import re
 import ssl
 import sys
+import time
 import urllib.parse
 import urllib.request
 
@@ -78,12 +80,26 @@ chk("build: entry count matches live API (%d)" % len(api), len(items) == len(api
     "built=%d api=%d" % (len(items), len(api)))
 chk("build: ids identical to live API", {i["id"] for i in items} == set(api))
 
-# votes drift while we check (a live contest): a row may legally move a vote or two
-# between the build pull and this one. Anything bigger is a bug.
-DRIFT_OK = 3
+# Votes drift while we check: this is a hot contest (measured +10 votes on one
+# entry in 30 min), so an absolute delta proves nothing. These invariants do:
+#   * upstream votes only go up -> a snapshot count can never be ABOVE live
+#   * the snapshot must be recent, that is the whole point of the rebuild job
+#   * the leaderboard order must still be the live order at the top
+above = [(i["id"], i["votes"], api[i["id"]]["votes"]) for i in items
+         if int(api[i["id"]]["votes"]) < i["votes"]]
+chk("build: no snapshot count sits above the live count (votes only go up)", not above, str(above[:3]))
+
+age = (time.time() - calendar.timegm(time.strptime(built["generated_at"], "%Y-%m-%d %H:%M UTC"))) / 60.0
+chk("snapshot is fresh (%.0f min old, rebuilt on push + schedule)" % age, age < 75,
+    "built %s, %.1f min ago" % (built["generated_at"], age))
+
+snap5 = [i["id"] for i in sorted(items, key=lambda r: -r["votes"])[:5]]
+live5 = [k for k, _ in sorted(((k, int(v["votes"])) for k, v in api.items()), key=lambda kv: -kv[1])[:5]]
+chk("build: the Top-5 the index ranks is still the live Top-5", set(snap5) == set(live5),
+    "snapshot %s vs live %s" % (snap5, live5))
 drift = [(i["id"], i["votes"], api[i["id"]]["votes"]) for i in items
-         if abs(int(api[i["id"]]["votes"]) - i["votes"]) > DRIFT_OK]
-chk("build: votes track the live API (nothing off by more than %d)" % DRIFT_OK, not drift, str(drift[:3]))
+         if int(api[i["id"]]["votes"]) - i["votes"] > max(25, 0.05 * int(api[i["id"]]["votes"]))]
+chk("build: counts are within a plausible growth margin of live", not drift, str(drift[:3]))
 moved = [(i["id"], i["votes"], api[i["id"]]["votes"]) for i in items if api[i["id"]]["votes"] != i["votes"]]
 if moved:
     print("      note: %d count(s) moved since the snapshot; pages pull votes.json to catch up" % len(moved), str(moved[:3]))
@@ -110,8 +126,10 @@ for i in items:
         bad.append((i["id"], "no deep link"))
     if want_frag not in t and want_frag.replace(" ", "%20") not in t:
         bad.append((i["id"], "wrong text fragment"))
-    if 'src="%s"' % i["img"] not in t:
+    if i["img"] and 'src="%s"' % i["img"] not in t:
         bad.append((i["id"], "artwork img not embedded"))
+    if not i["img"] and 'class="noimg"' not in t:
+        bad.append((i["id"], "image-less entry without placeholder"))
     if "AWSAccessKeyId" in t:
         bad.append((i["id"], "presigned (expiring) URL leaked into page"))
 chk("shell pages: exist for all entries, deep link + text fragment + artwork wired", not bad, str(bad[:4]))
@@ -121,7 +139,15 @@ stray = [f for f in files if os.path.basename(f)[:-5] not in api]
 chk("shell pages: no orphan pages (%d files)" % len(files), not stray, str(stray[:3]))
 
 # ─── 3. images must work as plain hotlinks (this is what kills the proxy) ──
-urls = sorted({i["img"] for i in items} | {i["thumb"] for i in items})
+# a fresh upload can have neither photo_url nor thumb_url: it must get the
+# placeholder, never an <img src=""> that renders as a broken icon
+noimg = [i for i in items if not i["img"] and not i["thumb"]]
+broken = [i["id"] for i in noimg if 'src=""' in open(os.path.join(SITE, "v", i["id"] + ".html"), encoding="utf-8").read()]
+chk("entries uploaded before their image exists (%d) render a placeholder, not a broken <img>" % len(noimg),
+    not broken and all("noimg" in open(os.path.join(SITE, "v", i["id"] + ".html"), encoding="utf-8").read() for i in noimg),
+    str([i["id"] for i in noimg][:3]) + (" broken:" + str(broken[:2]) if broken else ""))
+
+urls = sorted({i["img"] for i in items if i["img"]} | {i["thumb"] for i in items if i["thumb"]})
 if QUICK:
     urls = urls[:20]
 
@@ -174,10 +200,16 @@ if app_url.startswith("/"):
 st, _, b = http(app_url)
 src = b.decode("utf-8", "replace")
 chk("fetched the live frontend bundle (%s bytes)" % len(src), len(src) > 1000, app_url)
-chk("app.js still ignores gallery.item in init() (fix still required)",
-    "gallery.item" not in src and "loadGallery(1)" in src)
-chk("app.js exposes renderGallery/loadGallery globally (userscript hook points)",
-    "function renderGallery" in src and "function loadGallery" in src)
+# What the bundle does today is an observation, not an assumption: v18 ignored
+# gallery.item (that bug is why this shell exists), v27 added
+# openLightbox(site.gallery.item). Either way the shell must keep working, so the
+# only hard requirements are the two functions the userscript hooks.
+lm = re.search(r"galleryLimit\s*=\s*(\d+)", src)
+chk("official deep link handled by upstream? (shell still needed for search/ranking)",
+    True, "gallery.item handled in init: %s | grid page size: %s"
+    % ("gallery.item" in src, lm.group(1) if lm else "?"))
+chk("app.js still renders the grid through loadGallery/renderGallery (userscript hook points)",
+    "function renderGallery" in src and "loadGallery(1)" in src, app_url)
 
 # ─── 7. index.html self-containment ───────────────────────────────────────
 idx = open(os.path.join(SITE, "index.html"), encoding="utf-8").read()
