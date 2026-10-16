@@ -360,7 +360,7 @@ with sync_playwright() as pw:
     ix.wait_for_timeout(800)
     order = ix.evaluate("() => [...document.querySelectorAll('#grid .it .n')].map(e=>e.textContent).slice(0,3)")
     rank = ix.evaluate("""() => ({chips:[...document.querySelectorAll('#rank span')].map(e=>e.textContent),
-        label:(document.querySelector('.rankLabel')||{}).innerText||''})""")
+        label:(document.querySelector('.rankbox summary')||{}).innerText||''})""")
     top = rank["chips"]
     want = sorted(items, key=lambda r: -r["votes"])[:len(top)]
     want = ["%d. %s · %d" % (i + 1, r["caption"], r["votes"]) for i, r in enumerate(want)]
@@ -368,6 +368,19 @@ with sync_playwright() as pw:
         len(top) == 20 and top == want, "%d chips, head %s" % (len(top), top[:2]))
     chk("index: the ranking header says how many it lists",
         str(len(top)) in rank["label"], rank["label"].replace("\n", " ")[:70])
+
+    # 20 chips are fine on a monitor and swallow a phone screen, so narrow
+    # viewports must start with them collapsed and still reach the list at once
+    mob = ctx3.new_page()
+    mob.set_viewport_size({"width": 390, "height": 844})
+    mob.goto(BASE + "/index.html", wait_until="load", timeout=60000)
+    mob.wait_for_timeout(1500)
+    mb = mob.evaluate("""() => ({open:document.getElementById('rankbox').open,
+        first:Math.round((document.querySelector('#grid .it')||{getBoundingClientRect:()=>({top:1e9})}).getBoundingClientRect().top),
+        chips:document.querySelectorAll('#rank span').length, h:innerHeight})""")
+    chk("index on a phone: the Top-%d block is collapsed and the list is on the first screen" % len(top),
+        mb["open"] is False and mb["chips"] == len(top) and 0 < mb["first"] < mb["h"], str(mb))
+    mob.close()
     chk("index: all %d entries listed on open (no Load More)" % all_cards, all_cards == len(items), str(all_cards))
     chk("index: search narrows to the requested entry", one and all("Hanna" in t for t in one), str(one))
     chk("index: name sort works", order == sorted(order), str(order))

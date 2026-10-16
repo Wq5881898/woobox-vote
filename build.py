@@ -374,12 +374,14 @@ p.lead{margin:0;font-size:14px;color:var(--sub);line-height:1.6}
  text-decoration:none;font-weight:700;border:0;cursor:pointer;margin-top:5px}
 .it a{background:var(--brand);color:#fff}
 .it button{background:#eef2ef;color:#31513f}
-.rank{display:flex;flex-wrap:wrap;gap:6px;padding:4px 16px 0;font-size:12px}
+.rank{display:flex;flex-wrap:wrap;gap:6px;padding:4px 16px 8px;font-size:12px}
 .rank span{background:#fff;border:1px solid var(--line);border-radius:999px;padding:4px 9px;white-space:nowrap}
 .noimg{background:#f4f6f4;border:1px dashed #b9c6bd;border-radius:12px;padding:26px 14px;text-align:center;color:#63736a;font-size:14px;line-height:1.9}
 .ph{background:#f4f6f4;border:1px dashed #c3cec7;border-radius:10px;height:150px;display:flex;align-items:center;justify-content:center;color:#7d8b85;font-size:13px}
-.rankLabel{padding:10px 16px 0;font-size:12.5px;font-weight:700;color:#4a5a52}
-.rankLabel i{font-weight:400;font-style:normal;color:#7d8b85}
+.rankbox summary{padding:10px 16px 0;font-size:12.5px;font-weight:700;color:#4a5a52;cursor:pointer;list-style:none}
+.rankbox summary i{font-weight:400;font-style:normal;color:#7d8b85}
+.rankbox summary::before{content:"▸ ";color:#9aa8a1}
+.rankbox[open] summary::before{content:"▾ "}
 #tools{padding:18px 16px;font-size:14px;line-height:1.75}
 #tools code{background:#eef2ef;padding:1px 5px;border-radius:5px;font-size:12.5px;word-break:break-all}
 #tools h2{font-size:16px;margin:18px 0 6px}
@@ -396,8 +398,10 @@ select{padding:8px;border-radius:8px;border:1px solid var(--line);font-size:13px
 </header>
 <div class="tools">
  <input id="q" placeholder="搜索名字 / Search a name, e.g. Hanna" autocomplete="off" inputmode="search">
- <div class="rankLabel">票数排行 Top <span id="rank-n">20</span> <i>（完整名单用上方搜索 / 排序）</i></div>
- <div class="rank" id="rank"></div>
+ <details class="rankbox" id="rankbox" open>
+  <summary>票数排行 Top <span id="rank-n">20</span> <i>（完整名单用上方搜索 / 排序）</i></summary>
+  <div class="rank" id="rank"></div>
+ </details>
  <div id="live" style="margin-top:8px;font-size:12.5px;color:#7d8b85"></div>
 </div>
 <div class="wrap" style="padding-top:0">
@@ -443,6 +447,10 @@ function leaderboard(){   // NOT named "top": a global function called top colli
  var t=DATA.slice().sort(function(a,b){return b.votes-a.votes}).slice(0,TOP_N);
  document.getElementById('rank-n').textContent=TOP_N;
  document.getElementById('rank').innerHTML=t.map(function(r,i){return '<span>'+(i+1)+'. '+esc(r.caption)+' · '+r.votes+'</span>'}).join('');
+ // 20 chips fill a whole phone screen and push the list itself below the fold,
+ // so narrow viewports start collapsed; the <details> stays open without JS.
+ var box=document.getElementById('rankbox');
+ if(box && innerWidth<720){ box.removeAttribute('open'); }
 }
 function toast(t){var e=document.getElementById('toast');e.textContent=t;e.classList.add('on');setTimeout(function(){e.classList.remove('on')},1600)}
 // vote counts come from votes.json, which GitHub Actions rebuilds every ~10 min;

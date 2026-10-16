@@ -110,38 +110,54 @@ with sync_playwright() as p:
         main:(document.getElementById('votewin')||{}).href, copy:!!document.getElementById('copy')})""")
     chk("live: search -> entry page navigation works", d["url"].endswith("v/%s.html" % a.id), d["url"])
     chk("live: entry page states the position in the official gallery",
-        "第" in d["pos"] and "Load More" in d["pos"], d["pos"].replace("\n", " ")[:120])
+        "第" in d["pos"] and ("Load More" in d["pos"] or "一次就列出全部" in d["pos"]),
+        d["pos"].replace("\n", " ")[:120])
     chk("live: main CTA goes to woobox.com already scrolled to the artwork",
         d["main"].startswith("https://woobox.com/4rq96i/gallery/%s#gallery-section" % a.id), d["main"][:110])
 
-    # in-page voting window, opened from the public URL
+    # in-page voting window, opened from the public URL. v27 pops the artwork's
+    # lightbox as soon as the page's own data arrives, which is well before the
+    # 172-card grid finishes rendering, and a modal locks page scroll - so either
+    # landing counts, and we wait for the grid rather than judging the first frame.
     pg.evaluate("() => document.getElementById('inline').click()")
     why = "no iframe appeared"
     fr = None
+    st2 = {}
     for _ in range(60):
         pg.wait_for_timeout(1000)
         cand = [f for f in pg.frames if "4rq96i/gallery/" in (f.url or "")]
         if cand:
             fr = cand[0]
             try:
-                n = fr.evaluate("() => document.querySelectorAll('.btn-vote').length")
+                st2 = fr.evaluate("""() => {const lb=[...document.querySelectorAll('[class*=lightbox],[class*=modal]')]
+                      .filter(e=>e.offsetParent!==null && /Vote|Voted/.test(e.innerText||''));
+                    const sec=document.getElementById('gallery-section');
+                    return {cards:document.querySelectorAll('.gallery-card').length,
+                      votable:[...document.querySelectorAll('.btn-vote')]
+                        .filter(b=>!b.classList.contains('voted')&&!b.disabled).length,
+                      scrollY:Math.round(scrollY),
+                      galleryTop:Math.round(sec?sec.getBoundingClientRect().top+scrollY:-1),
+                      anchor:!!sec, lb:lb.length,
+                      lbVote:lb.length?!!lb[0].querySelector('.btn-vote:not(.voted)'):false};}""")
             except Exception as e:
-                n, why = 0, "frame not inspectable: %s" % str(e)[:60]
+                st2, why = {}, "frame not inspectable: %s" % str(e)[:60]
                 continue
-            if n:
-                why = "%d Vote buttons" % n
+            if (st2["cards"] and st2["votable"]) or (st2["lb"] and st2["lbVote"]):
+                why = "cards=%d votable=%d lightbox=%d" % (st2["cards"], st2["votable"], st2["lb"])
                 break
-            why = "frame loaded but rendered 0 Vote buttons (woobox JS did not run?)"
-        else:
+            why = "frame loaded, nothing votable yet (cards=%d lb=%d)" % (st2["cards"], st2["lb"])
+    else:
+        if not st2:
             why = "iframe element exists, no woobox frame: " + str(
                 pg.evaluate("() => [...document.querySelectorAll('iframe')].map(f=>f.src.slice(0,40))"))[:90]
-    st2 = fr.evaluate("""() => ({cards:document.querySelectorAll('.gallery-card').length,
-        votable:[...document.querySelectorAll('.btn-vote')].filter(b=>!b.classList.contains('voted')&&!b.disabled).length,
-        scrollY:Math.round(scrollY),anchor:!!document.getElementById('gallery-section')})""") if fr else {}
-    chk("live: in-page voting window shows the official page with usable Vote buttons",
-        bool(fr) and st2.get("cards", 0) >= 1 and st2.get("votable", 0) >= 1, "%s | %s" % (why, str(st2)[:140]))
-    chk("live: in-page voting window opens already scrolled to the gallery",
-        st2.get("scrollY", 0) > 300, "scrollY=%s" % st2.get("scrollY"))
+    chk("live: in-page voting window reaches the official artwork with a usable Vote button",
+        bool(fr) and ((st2.get("cards", 0) >= 1 and st2.get("votable", 0) >= 1)
+                      or (st2.get("lb") and st2.get("lbVote"))),
+        "%s | %s" % (why, str(st2)[:140]))
+    chk("live: in-page voting window lands on the artwork, not the hero page",
+        st2.get("scrollY", 0) > 300 or abs(st2.get("scrollY", 0) - st2.get("galleryTop", 1e9)) < 80
+        or bool(st2.get("lb")),
+        "scrollY=%s, gallery at %s, lightbox=%s" % (st2.get("scrollY"), st2.get("galleryTop"), st2.get("lb")))
     pg.screenshot(path=os.path.join(os.path.dirname(__file__) or ".", "shots_live.png"))
     br.close()
 

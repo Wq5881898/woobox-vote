@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-16 22:48 UTC",
+ "generated_at": "2026-10-16 22:55 UTC",
  "total": 172,
  "frontend": {
   "limit": 1000,
@@ -120,7 +120,7 @@
    "caption": "Ezra - Elementary",
    "raw_caption": "Ezra - Elementary",
    "uploaded_by": "Mrs.",
-   "votes": 954,
+   "votes": 957,
    "type": "photo",
    "img": "https://offertabs.s3.amazonaws.com/offer/4rq96i/large/810_6ab57fd3674175.76399816.jpg",
    "thumb": "https://offertabs.s3.amazonaws.com/offer/4rq96i/thumbs/250_6ab57fd3674175.76399816.jpg",
@@ -354,7 +354,7 @@
    "caption": "Joan - Junior High",
    "raw_caption": "Joan - Junior High",
    "uploaded_by": "Alexa",
-   "votes": 230,
+   "votes": 233,
    "type": "photo",
    "img": "https://offertabs.s3.amazonaws.com/offer/4rq96i/large/810_6ac7bf78d526a7.62367228.jpg",
    "thumb": "https://offertabs.s3.amazonaws.com/offer/4rq96i/thumbs/250_6ac7bf78d526a7.62367228.jpg",
@@ -440,6 +440,24 @@
    "pos_hint": "📍 官方页面现在一次就列出全部 172 件作品（不用点 Load More），按最新排序这张排在<b>第 74 位</b>。打开链接会自动弹出这张作品的大图，直接点里面的 Vote 即可；找不到就用浏览器搜索 <b>Timi - Elementary</b>。"
   },
   {
+   "id": "rdroplpg",
+   "caption": "Roopamjot - Junior High",
+   "raw_caption": "Roopamjot - Junior High",
+   "uploaded_by": "Amanda",
+   "votes": 186,
+   "type": "photo",
+   "img": "https://offertabs.s3.amazonaws.com/offer/4rq96i/uploads/6ad24676a6eb21.01445349.jpg",
+   "thumb": "https://offertabs.s3.amazonaws.com/offer/4rq96i/uploads/6ad24676a6eb21.01445349.jpg",
+   "deep": "https://woobox.com/4rq96i/gallery/rdroplpg",
+   "frag": "#gallery-section:~:text=Roopamjot%20-%20Junior%20High",
+   "pos": 7,
+   "grid_page": 1,
+   "grid_slot": 7,
+   "load_more_clicks": 0,
+   "page": "v/rdroplpg.html",
+   "pos_hint": "📍 官方页面现在一次就列出全部 172 件作品（不用点 Load More），按最新排序这张排在<b>第 7 位</b>。打开链接会自动弹出这张作品的大图，直接点里面的 Vote 即可；找不到就用浏览器搜索 <b>Roopamjot - Junior High</b>。"
+  },
+  {
    "id": "vaexroag",
    "caption": "Rubaani - Elementary",
    "raw_caption": "Rubaani - Elementary",
@@ -474,24 +492,6 @@
    "load_more_clicks": 0,
    "page": "v/mzrdgdlq.html",
    "pos_hint": "📍 官方页面现在一次就列出全部 172 件作品（不用点 Load More），按最新排序这张排在<b>第 11 位</b>。打开链接会自动弹出这张作品的大图，直接点里面的 Vote 即可；找不到就用浏览器搜索 <b>Rinad - Junior High</b>。"
-  },
-  {
-   "id": "rdroplpg",
-   "caption": "Roopamjot - Junior High",
-   "raw_caption": "Roopamjot - Junior High",
-   "uploaded_by": "Amanda",
-   "votes": 172,
-   "type": "photo",
-   "img": "https://offertabs.s3.amazonaws.com/offer/4rq96i/uploads/6ad24676a6eb21.01445349.jpg",
-   "thumb": "https://offertabs.s3.amazonaws.com/offer/4rq96i/uploads/6ad24676a6eb21.01445349.jpg",
-   "deep": "https://woobox.com/4rq96i/gallery/rdroplpg",
-   "frag": "#gallery-section:~:text=Roopamjot%20-%20Junior%20High",
-   "pos": 7,
-   "grid_page": 1,
-   "grid_slot": 7,
-   "load_more_clicks": 0,
-   "page": "v/rdroplpg.html",
-   "pos_hint": "📍 官方页面现在一次就列出全部 172 件作品（不用点 Load More），按最新排序这张排在<b>第 7 位</b>。打开链接会自动弹出这张作品的大图，直接点里面的 Vote 即可；找不到就用浏览器搜索 <b>Roopamjot - Junior High</b>。"
   },
   {
    "id": "jabzarap",

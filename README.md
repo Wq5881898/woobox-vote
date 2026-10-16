@@ -80,8 +80,8 @@ Three ways to reach one artwork, in order of how little they ask of the voter:
 pip install requests playwright && playwright install chromium
 python build.py                     # writes ./site  (SITE_BASE_URL=… for canonical URLs)
 python verify.py                    # 25 network/protocol checks against woobox.com
-python verify_browser.py            # 31 headless-Chromium end-to-end checks + shots/
-python verify_browser.py --vote     # + casts ONE real vote through the shell iframe (32)
+python verify_browser.py            # 32 headless-Chromium end-to-end checks + shots/
+python verify_browser.py --vote     # + casts ONE real vote through the shell iframe (33)
 python verify_live.py               # checks against the DEPLOYED Pages URL
 python probes/dbg7_v27.py           # what the official deep link does right now
 # verify.py / verify_browser.py take --quick to skip the slow ?links=1 harvest
