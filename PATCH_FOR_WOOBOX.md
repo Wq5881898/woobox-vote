@@ -4,12 +4,13 @@ Two independent bugs on the artwork deep link
 `https://woobox.com/4rq96i/gallery/<upload_id>`. Both are client-side; the server
 already sends everything needed. Reproducible on a fresh profile, all browsers.
 
-> **Status 2026-10-16 — Bug 1 is fixed upstream, thank you.** `app.js` v27 contains
+> **Status 2026-10-16 — Bug 1 is fixed upstream, thank you.** `app.js` (v27, still in v31) contains
 > `if (site.gallery.item) { openLightbox(site.gallery.item); }` and
 > `galleryLimit = 1000`, so the deep link now opens the artwork's own lightbox
 > (image, Vote, Share Poster) instead of 12 unrelated cards. Verified with
 > `python probes/dbg7_v27.py`: the lightbox is open on load and shows the requested
-> entry. **Bug 2 below is still reproducible on v27**, and the acceptance checks are
+> entry. **Bug 2 below is still reproducible on the current v31** (`result_votes ||
+[]>` and two `votedIds.includes(...)` disables remain), and the acceptance checks are
 > rewritten against the bundle you ship today.
 
 ## Bug 1 — the deep link ignored the entry it was given  *(fixed in v27)*

@@ -209,7 +209,7 @@ chk("official deep link handled by upstream? (shell still needed for search/rank
     True, "gallery.item handled in init: %s | grid page size: %s"
     % ("gallery.item" in src, lm.group(1) if lm else "?"))
 chk("app.js still renders the grid through loadGallery/renderGallery (userscript hook points)",
-    "function renderGallery" in src and "loadGallery(1)" in src, app_url)
+    "function renderGallery" in src and "function loadGallery" in src, app_url)
 
 # ─── 7. index.html self-containment ───────────────────────────────────────
 idx = open(os.path.join(SITE, "index.html"), encoding="utf-8").read()

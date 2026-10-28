@@ -20,6 +20,7 @@ Proves, on the LIVE site:
 import http.server
 import json
 import os
+import re
 import socketserver
 import sys
 import threading
@@ -105,7 +106,10 @@ def wait_render(page):
 
 
 srv, BASE = start_server()
-items = json.load(open(os.path.join(SITE, "items.json"), encoding="utf-8"))["items"]
+built = json.load(open(os.path.join(SITE, "items.json"), encoding="utf-8"))
+items = built["items"]
+# what the live bundle pages at (v18: 12, v31: 50) - read from the build, not here
+PAGE_SIZE = int((built.get("frontend") or {}).get("limit") or 12)
 target = [i for i in items if i["id"] == "xpgroevp"][0]
 others = [i for i in items if i["id"] != "xpgroevp"][:: max(1, len(items) // 2)][:2]
 
@@ -123,8 +127,16 @@ with sync_playwright() as pw:
     chk("BUG reproduced: %s renders the whole grid (%d cards) although the page already knows the entry"
         % (target["id"], s["cards"]), s["cards"] > 1 and s["item"] and s["item"]["id"] == target["id"],
         "cards=%d scrollY=%d" % (s["cards"], s["scrollY"]))
-    chk("BUG reproduced: the requested artwork is not among the rendered page-1 cards",
-        target["caption"] not in s["text"], "cards: " + ", ".join(t[:18] for t in s["text"][:6]))
+    # v18 rendered one page of 12 cards and the entry was simply absent; v31 pages
+    # 50 at a time, so the entry can be in the DOM and still be impossible to find.
+    # What is constant - and what this shell exists to fix - is that the grid
+    # neither puts the requested entry first, nor marks it, nor scrolls to it.
+    present = target["caption"] in s["text"]
+    chk("BUG still real: the grid does not put the requested entry first or scroll to it "
+        "(%d cards, entry %s among them)" % (s["cards"], "present" if present else "absent"),
+        s["cards"] > 1 and s["scrollY"] < 200
+        and not (s["text"] and s["text"][0].startswith(target["caption"].split(" - ")[0])),
+        "cards=%d first=%r scrollY=%d" % (s["cards"], (s["text"] or ["<none>"])[0][:22], s["scrollY"]))
     pg.screenshot(path=os.path.join(SHOT, "1_before_broken.png"), full_page=False)
 
     # ── 2. the handoff URL really lands on the gallery section ──────────────
@@ -269,11 +281,15 @@ with sync_playwright() as pw:
         page += 1
     idx = order.index(target["id"])
     hint = " ".join(st["hint"].split())
-    chk("shell page: position hint matches the real gallery order (slot %d of %d)" % (idx + 1, len(order)),
-        ("第 %d 位" % (idx + 1)) in hint and (
-            ("第 %d 页第 %d 张" % (idx // 12 + 1, idx % 12 + 1)) in hint      # paged bundle
-            or "一次就列出全部" in hint),                                     # bundle shows all at once
-        hint[:160])
+    # the hint is generated from the live page size recorded in items.json, and
+    # new uploads can shift the order by a place or two between build and check
+    m = re.search(r"第 (\d+) 位", hint)
+    shown = int(m.group(1)) if m else -1
+    ok_paging = ("一次就列出全部" in hint) or (
+        "第 %d 页第 %d 张" % ((shown - 1) // PAGE_SIZE + 1, (shown - 1) % PAGE_SIZE + 1) in hint)
+    chk("shell page: position hint matches the real gallery order (slot %d of %d, page size %d)"
+        % (idx + 1, len(order), PAGE_SIZE),
+        abs(shown - (idx + 1)) <= 3 and ok_paging, hint[:160])
     sh.set_viewport_size({"width": 1280, "height": 900})
     sh.evaluate("() => document.getElementById('inline').click()")
     frame_ok = sh.evaluate("""() => new Promise(res => {const f=document.getElementById('frame');
@@ -364,8 +380,12 @@ with sync_playwright() as pw:
     top = rank["chips"]
     want = sorted(items, key=lambda r: -r["votes"])[:len(top)]
     want = ["%d. %s · %d" % (i + 1, r["caption"], r["votes"]) for i, r in enumerate(want)]
-    chk("index: header ranks the top %d entries, in true vote order" % len(top),
-        len(top) == 20 and top == want, "%d chips, head %s" % (len(top), top[:2]))
+    # the expected count comes from the build itself, so bumping TOP_N can never
+    # silently turn this check into a no-op
+    want_n = int(open(os.path.join(SITE, "index.html"), encoding="utf-8").read()
+                 .split("TOP_N=")[1].split(";", 1)[0])
+    chk("index: header ranks the top %d entries, in true vote order" % want_n,
+        len(top) == want_n and top == want, "%d chips, head %s" % (len(top), top[:2]))
     chk("index: the ranking header says how many it lists",
         str(len(top)) in rank["label"], rank["label"].replace("\n", " ")[:70])
 

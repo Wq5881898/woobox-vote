@@ -21,16 +21,21 @@ position **108 of 116**, i.e. page 9 slot 12, and is not on page 1 at all).
 Measured on the live page: `cards=12, scrollY=0`, requested entry absent.
 Upstream fix: [`PATCH_FOR_WOOBOX.md`](PATCH_FOR_WOOBOX.md).
 
-> **Upstream moved (measured 2026-10-16):** the bundle went v18 → v27. `init()` now
-> contains `if (site.gallery.item) { openLightbox(site.gallery.item); }`, so the
-> official deep link pops the artwork's own lightbox (image + Vote + Share), and
-> `galleryLimit` went `12` → `1000`, i.e. the grid renders every entry at once and
-> the Load More button is gone. `build.py` reads both facts from the live bundle on
-> every rebuild instead of hardcoding them, and the page text follows. What the
-> shell still does that woobox.com cannot: find an entry **by name** among 170+
-> posters, rank them, show counts with a timestamp, and hand over a link that is
-> already positioned — plus `PATCH_FOR_WOOBOX.md`'s second bug (`result_votes`
-> marking strangers' entries as `Voted`) is still unfixed.
+| bundle | page size | deep link | what that meant for this shell |
+|---|---|---|---|
+| v18 (first measured) | `const galleryLimit = 12`, one page of 12 | ignored `gallery.item` | the bug this repo exists for: a shared link showed 12 strangers |
+| v27 | `galleryLimit = 1000`, everything at once, no Load More | `openLightbox(site.gallery.item)` added | "click Load More 8 times" would have become a lie |
+| v31 (live now) | inlined `WooboxSDK.gallery({ page, limit: 50 })`, Load More recreated at run time as `#load-more-btn` | lightbox still auto-opens | the page-size constant is gone from the source, so it is scraped from the call |
+
+> **Upstream keeps moving (measured 2026-10-16).** `build.py` therefore reads the page
+> size, the auto-lightbox flag and the Load More button id out of the live bundle on
+> every rebuild (`discover_frontend_facts`) instead of hardcoding them, and the
+> position hint on each entry page is generated from what it finds. Verified with
+> `python probes/dbg7_v27.py`. What the shell still does that woobox.com cannot: find
+> an entry **by name** among 270+ posters, rank them, show counts with a timestamp,
+> and hand over a link that is already positioned - and the second bug in
+> [`PATCH_FOR_WOOBOX.md`](PATCH_FOR_WOOBOX.md) (`result_votes` marking strangers'
+> entries `Voted` + disabled) is still present in v31.
 
 ## 2. Constraints that decide the design (all measured, see `verify.py`)
 
@@ -49,7 +54,7 @@ Upstream fix: [`PATCH_FOR_WOOBOX.md`](PATCH_FOR_WOOBOX.md).
 ```
 site/                     ← deploy this folder as a static site (GitHub Pages etc.)
   index.html              every entry on one page (172 today): search / sort /
-                          Top-20 leaderboard / copy-deeplink / CSV export / install
+                          Top-30 leaderboard / copy-deeplink / CSV export / install
                           section, no Load More
   v/<id>.html             one page per artwork: big image, vote count, position hint,
                           and the official voting page embedded in an iframe
@@ -100,7 +105,7 @@ with `window` (e.g. `top`).
 Two knobs, both environment variables (no code edit needed):
 
 ```sh
-TOP_N=50 python build.py      # how many entries the index header ranks (default 20)
+TOP_N=100 python build.py     # how many entries the index header ranks (default 30)
 ```
 
 Point people at `…/v/<id>.html`; the page states the entry's position in the

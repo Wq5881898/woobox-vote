@@ -128,8 +128,8 @@ def load_all():
 
 GALLERY_LIMIT_FALLBACK = 12   # only used if the live bundle cannot be read
 # How many entries the index header ranks. Overridable without editing code:
-#   TOP_N=50 python build.py
-TOP_N = max(1, int(os.environ.get("TOP_N") or 20))
+#   TOP_N=100 python build.py
+TOP_N = max(1, int(os.environ.get("TOP_N") or 30))
 
 
 def fetch_text(url, retries=3):
@@ -157,7 +157,8 @@ def discover_frontend_facts(gallery_page_url):
         (the official deep link now opens the artwork itself)
     Returns {"limit": int, "lightbox": bool, "bundle": str}.
     """
-    facts = {"limit": GALLERY_LIMIT_FALLBACK, "lightbox": False, "bundle": ""}
+    facts = {"limit": GALLERY_LIMIT_FALLBACK, "lightbox": False, "bundle": "",
+             "load_more_id": "load-more"}
     try:
         page = fetch_text(gallery_page_url)
         m = re.search(r'src="([^"]*app\.js[^"]*)"', page)
@@ -167,10 +168,19 @@ def discover_frontend_facts(gallery_page_url):
         url = "https://woobox.com" + url if url.startswith("/") else url
         src = fetch_text(url)
         facts["bundle"] = url
-        lm = re.search(r"galleryLimit\s*=\s*(\d+)", src)
+        # v18 kept the page size in `const galleryLimit = 12`; v31 dropped the
+        # constant and inlines it: WooboxSDK.gallery({ page: page, limit: 50 }).
+        lm = (re.search(r"galleryLimit\s*=\s*(\d+)", src)
+              or re.search(r"gallery\(\{[^}]*?limit:\s*(\d+)", src, re.S))
         if lm:
             facts["limit"] = int(lm.group(1))
         facts["lightbox"] = "openLightbox(site.gallery.item)" in src
+        # which button the voter is told to press moved too (static #load-more in
+        # v18, created at run time as #load-more-btn in v31)
+        for bid in ("load-more-btn", "load-more"):
+            if "'%s'" % bid in src or '"%s"' % bid in src:
+                facts["load_more_id"] = bid
+                break
     except Exception as e:
         print("note: could not read the live bundle (%s); assuming limit=%d"
               % (str(e)[:60], GALLERY_LIMIT_FALLBACK))
@@ -399,7 +409,7 @@ select{padding:8px;border-radius:8px;border:1px solid var(--line);font-size:13px
 <div class="tools">
  <input id="q" placeholder="搜索名字 / Search a name, e.g. Hanna" autocomplete="off" inputmode="search">
  <details class="rankbox" id="rankbox" open>
-  <summary>票数排行 Top <span id="rank-n">20</span> <i>（完整名单用上方搜索 / 排序）</i></summary>
+  <summary>票数排行 Top <span id="rank-n">30</span> <i>（完整名单用上方搜索 / 排序）</i></summary>
   <div class="rank" id="rank"></div>
  </details>
  <div id="live" style="margin-top:8px;font-size:12.5px;color:#7d8b85"></div>
@@ -596,8 +606,8 @@ def js_selfcheck():
 def main():
     raw, meta = load_all()
     facts = discover_frontend_facts("%s/%s/gallery/%s" % (API_ROOT, SHARD, (raw[0]["id"] if raw else "x")))
-    print("live frontend: %s (galleryLimit=%d, auto-lightbox on deep link=%s)"
-          % (facts["bundle"].split("/")[-1], facts["limit"], facts["lightbox"]))
+    print("live frontend: %s (page size=%d, auto-lightbox on deep link=%s, load-more button=#%s)"
+          % (facts["bundle"].split("/")[0:][-1], facts["limit"], facts["lightbox"], facts["load_more_id"]))
     recs = build_records(raw, facts["limit"], facts["lightbox"])
     total = meta.get("total")
     if total and len(recs) < total:
