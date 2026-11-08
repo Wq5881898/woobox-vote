@@ -129,7 +129,7 @@ def load_all():
 GALLERY_LIMIT_FALLBACK = 12   # only used if the live bundle cannot be read
 # How many entries the index header ranks. Overridable without editing code:
 #   TOP_N=100 python build.py
-TOP_N = max(1, int(os.environ.get("TOP_N") or 30))
+TOP_N = max(1, int(os.environ.get("TOP_N") or 40))
 
 
 def fetch_text(url, retries=3):
@@ -409,7 +409,7 @@ select{padding:8px;border-radius:8px;border:1px solid var(--line);font-size:13px
 <div class="tools">
  <input id="q" placeholder="搜索名字 / Search a name, e.g. Hanna" autocomplete="off" inputmode="search">
  <details class="rankbox" id="rankbox" open>
-  <summary>票数排行 Top <span id="rank-n">30</span> <i>（完整名单用上方搜索 / 排序）</i></summary>
+  <summary>票数排行 Top <span id="rank-n">40</span> <i>（完整名单用上方搜索 / 排序）</i></summary>
   <div class="rank" id="rank"></div>
  </details>
  <div id="live" style="margin-top:8px;font-size:12.5px;color:#7d8b85"></div>

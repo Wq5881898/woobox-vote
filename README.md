@@ -54,7 +54,7 @@ Upstream fix: [`PATCH_FOR_WOOBOX.md`](PATCH_FOR_WOOBOX.md).
 ```
 site/                     ← deploy this folder as a static site (GitHub Pages etc.)
   index.html              every entry on one page (172 today): search / sort /
-                          Top-30 leaderboard / copy-deeplink / CSV export / install
+                          Top-40 leaderboard / copy-deeplink / CSV export / install
                           section, no Load More
   v/<id>.html             one page per artwork: big image, vote count, position hint,
                           and the official voting page embedded in an iframe
@@ -105,7 +105,7 @@ with `window` (e.g. `top`).
 Two knobs, both environment variables (no code edit needed):
 
 ```sh
-TOP_N=100 python build.py     # how many entries the index header ranks (default 30)
+TOP_N=100 python build.py     # how many entries the index header ranks (default 40)
 ```
 
 Point people at `…/v/<id>.html`; the page states the entry's position in the
