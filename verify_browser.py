@@ -402,7 +402,9 @@ with sync_playwright() as pw:
         mb["open"] is False and mb["chips"] == len(top) and 0 < mb["first"] < mb["h"], str(mb))
     mob.close()
     chk("index: all %d entries listed on open (no Load More)" % all_cards, all_cards == len(items), str(all_cards))
-    chk("index: search narrows to the requested entry", one and all("Hanna" in t for t in one), str(one))
+    chk("index: search narrows to entries matching the typed name, target included (%d hits)" % len(one),
+        one and all("Hanna" in t for t in one)
+        and any(t.strip() == target["caption"].strip() for t in one), str(one[:4]))
     chk("index: name sort works", order == sorted(order), str(order))
     ix.select_option("#sort", "votes")
     ix.wait_for_timeout(600)

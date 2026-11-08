@@ -101,8 +101,19 @@ with sync_playwright() as p:
     pg.fill("#q", "Hanna")
     pg.wait_for_timeout(500)
     names = pg.evaluate("() => [...document.querySelectorAll('#grid .it .n')].map(e=>e.textContent)")
-    chk("live: a parent can find the entry by typing a name", names and all("Hanna" in n for n in names), str(names))
-    pg.click("#grid .it a")
+    chk("live: a parent can find the entry by typing a name", names and all("Hanna" in n for n in names),
+        "%d match(es): %s" % (len(names), names[:4]))
+    # first names repeat constantly in a 361-entry gallery, so the first hit is not
+    # necessarily the entry under test: require that the entry itself is offered
+    # and click that exact row
+    row = pg.query_selector('#grid .it a[href$="/%s.html"]' % a.id)
+    chk("live: the entry itself is offered among the %d same-name search hits" % len(names),
+        row is not None,
+        "hrefs=%s" % pg.evaluate(
+            "() => [...document.querySelectorAll('#grid .it a')].map(x => x.getAttribute('href')).slice(0,4)"))
+    if row is None:
+        row = pg.query_selector("#grid .it a")
+    row.click()
     pg.wait_for_timeout(2000)
     d = pg.evaluate("""() => ({url:location.href, title:(document.querySelector('.t')||{}).textContent,
         votes:(document.getElementById('v')||{}).textContent, asof:document.getElementById('asof').textContent,
